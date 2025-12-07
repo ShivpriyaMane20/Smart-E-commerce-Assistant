@@ -6,7 +6,7 @@ import json
 import time
 
 #BACKEND_URL = "http://127.0.0.1:8000"
-BACKEND_URL = "https://partnerships-describing-seq-gather.trycloudflare.com"
+BACKEND_URL = "https://lodging-governmental-job-vacancies.trycloudflare.com"
 st.set_page_config(
     page_title="Smart E-Commerce Assistant",
     page_icon="🛒",
