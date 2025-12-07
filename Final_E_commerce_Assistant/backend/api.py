@@ -8,7 +8,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 
-from .core import (
+from core import (
     full_analysis,
     generate_reviews_for_product,
     build_report_text,
