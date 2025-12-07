@@ -15,6 +15,7 @@ from .core import (
     build_report_html,
     build_report_pdf,
     generate_improved_description,
+    generate_caption_from_suggestions,  # NEW IMPORT
 )
 
 
@@ -98,6 +99,45 @@ async def improve_description_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Description improvement failed: {e}")
+
+
+# -----------------------------------------------------------------------------
+# NEW: /generate_caption_from_suggestions – AI-enhanced caption based on suggestions
+# -----------------------------------------------------------------------------
+@app.post("/generate_caption_from_suggestions")
+async def generate_caption_from_suggestions_endpoint(
+    original_caption: str = Form(...),
+    suggestions: str = Form(...),  # JSON string
+    image_analysis: str = Form(...),  # JSON string
+    price: float = Form(...),
+    category: str = Form(...),
+) -> Dict[str, Any]:
+    """
+    Generate an improved caption based on AI suggestions.
+    """
+    try:
+        # Parse JSON strings
+        suggestions_list = json.loads(suggestions)
+        image_analysis_dict = json.loads(image_analysis)
+        
+        improved_caption = generate_caption_from_suggestions(
+            original_caption=original_caption,
+            suggestions=suggestions_list,
+            image_analysis=image_analysis_dict,
+            price=price,
+            category=category,
+        )
+        
+        return {
+            "original": original_caption,
+            "improved": improved_caption,
+        }
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON in request")
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Caption generation failed: {e}")
 
 
 # -----------------------------------------------------------------------------

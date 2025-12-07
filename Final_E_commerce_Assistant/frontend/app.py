@@ -5,8 +5,8 @@ import requests
 import json
 import time
 
-#BACKEND_URL = "http://127.0.0.1:8000"
-BACKEND_URL = "https://replica-statements-approximate-deborah.trycloudflare.com"
+BACKEND_URL = "http://127.0.0.1:8000"
+
 st.set_page_config(
     page_title="Smart E-Commerce Assistant",
     page_icon="🛒",
@@ -74,6 +74,7 @@ st.markdown("""
     .badge-standard {background: #dbeafe; color: #1e40af;}
     .badge-enhanced {background: #d1fae5; color: #065f46;}
     .badge-seo {background: #fef3c7; color: #92400e;}
+    .badge-ai-improved {background: #e9d5ff; color: #6b21a8;}
     
     /* Risk box */
     .risk-box {
@@ -102,6 +103,24 @@ st.markdown("""
     .sug-medium {border-color: #eab308; background: #fefce8;}
     .sug-low {border-color: #3b82f6; background: #eff6ff;}
     
+    /* Info box */
+    .info-box {
+        background: #eff6ff;
+        border: 1px solid #3b82f6;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 1rem 0;
+        color: #1e40af;  /* ADD THIS - Dark blue text */
+    }
+    
+    .info-box strong {
+        color: #1e3a8a;  /* ADD THIS - Even darker for bold text */
+    }
+    
+    .info-box em {
+        color: #374151;  /* ADD THIS - Gray for emphasized text */
+    }
+    
     /* Hide streamlit elements */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
@@ -120,6 +139,9 @@ for key, default in {
     "category": "Furniture",
     "reviews": None,
     "report_text": None,
+    "selected_caption": None,  # NEW: Track selected caption
+    "selected_caption_type": None,  # NEW: Track caption type
+    "enhanced_caption": None,  # NEW: Store AI-enhanced caption
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
@@ -197,7 +219,7 @@ with tab1:
             category = st.selectbox(
                 "**Category**",
                 ["Phone Case", "Furniture", "Clothing", "Electronics", "Home Decor", "Toys", "Sports", "Other"],
-                index=1
+                index=0
             )
         
         st.markdown("")
@@ -234,6 +256,12 @@ with tab1:
                         st.session_state.price = price
                         st.session_state.category = category
                         
+                        # Reset review-related states
+                        st.session_state.reviews = None
+                        st.session_state.selected_caption = None
+                        st.session_state.selected_caption_type = None
+                        st.session_state.enhanced_caption = None
+                        
                         st.success("✅ Analysis complete!")
                         st.balloons()
                         st.rerun()
@@ -251,6 +279,7 @@ with tab1:
             captions = analysis.get("captions", {})
             comparison = analysis.get("comparison", {})
             suggestions = analysis.get("suggestions", [])
+            image_analysis = analysis.get("image_analysis", {})
             
             # === CAPTIONS ===
             st.markdown("### 🎨 AI-Generated Captions")
@@ -303,6 +332,23 @@ with tab1:
             with col_copy6:
                 if st.button("📋 Copy", key="copy3", use_container_width=True):
                     st.code(captions.get('seo_optimized', ''))
+            
+            # === AI-ENHANCED CAPTION (if exists) ===
+            if st.session_state.enhanced_caption:
+                st.markdown(f"""
+                <div class="caption-card" style="border-color: #9333ea;">
+                    <div class="caption-title">
+                        <span class="caption-badge badge-ai-improved">✨ AI-IMPROVED</span>
+                        Based on Suggestions
+                    </div>
+                    <div class="caption-text">{st.session_state.enhanced_caption}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                col_copy7, col_copy8 = st.columns([3, 1])
+                with col_copy8:
+                    if st.button("📋 Copy", key="copy_enhanced", use_container_width=True):
+                        st.code(st.session_state.enhanced_caption)
             
             st.markdown("---")
             
@@ -370,6 +416,54 @@ with tab1:
                         <p style="margin: 0.5rem 0 0 0; color: #4b5563;">{desc}</p>
                     </div>
                     """, unsafe_allow_html=True)
+                
+                # === NEW: GENERATE AI-ENHANCED CAPTION ===
+                st.markdown("---")
+                st.markdown("### ✨ Generate AI-Enhanced Caption")
+                st.caption("Create an improved caption that incorporates the AI suggestions above")
+                
+                col_base, col_gen = st.columns([2, 1])
+                
+                with col_base:
+                    base_caption_type = st.selectbox(
+                        "**Base caption to improve:**",
+                        ["standard", "enhanced", "seo_optimized"],
+                        format_func=lambda x: {
+                            "standard": "Standard (Professional & Factual)",
+                            "enhanced": "Enhanced (Marketing-Focused)",
+                            "seo_optimized": "SEO Optimized (Search-Focused)"
+                        }[x]
+                    )
+                
+                with col_gen:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    if st.button("✨ Generate", key="gen_enhanced_caption", use_container_width=True):
+                        with st.spinner("Generating AI-enhanced caption..."):
+                            try:
+                                original_caption = captions.get(base_caption_type, "")
+                                
+                                data = {
+                                    "original_caption": original_caption,
+                                    "suggestions": json.dumps(suggestions),
+                                    "image_analysis": json.dumps(image_analysis),
+                                    "price": str(st.session_state.price),
+                                    "category": st.session_state.category,
+                                }
+                                
+                                resp = requests.post(
+                                    f"{BACKEND_URL}/generate_caption_from_suggestions",
+                                    data=data,
+                                    timeout=30
+                                )
+                                resp.raise_for_status()
+                                result = resp.json()
+                                
+                                st.session_state.enhanced_caption = result['improved']
+                                st.success("✅ AI-enhanced caption generated!")
+                                st.rerun()
+                                
+                            except Exception as e:
+                                st.error(f"Error: {e}")
             else:
                 st.success("✅ **No issues found!** Your listing looks great.")
             
@@ -402,7 +496,7 @@ with tab1:
                             st.error(f"Error: {e}")
 
 # ============================================================================
-# TAB 2: REVIEWS
+# TAB 2: REVIEWS (NEW FLOW)
 # ============================================================================
 with tab2:
     st.markdown("## ⭐ Customer Review Simulation")
@@ -411,15 +505,48 @@ with tab2:
         st.info("👈 Complete product analysis first")
     else:
         captions = st.session_state.analysis.get("captions", {})
-        caption = captions.get("standard", "")
+        suggestions = st.session_state.analysis.get("suggestions", [])
         
-        st.markdown(f"**Using caption:** _{caption}_")
+        # === STEP 1: SELECT CAPTION ===
+        st.markdown("### Step 1: Select Caption for Review Generation")
+        st.caption("Choose which caption to use for generating customer reviews")
         
-        if st.button("🎲 Generate Reviews", type="primary", use_container_width=True):
+        # Create caption options including enhanced if exists
+        caption_options = {
+            "standard": ("Standard", captions.get("standard", "")),
+            "enhanced": ("Enhanced", captions.get("enhanced", "")),
+            "seo_optimized": ("SEO Optimized", captions.get("seo_optimized", "")),
+        }
+        
+        if st.session_state.enhanced_caption:
+            caption_options["ai_improved"] = ("✨ AI-Improved", st.session_state.enhanced_caption)
+        
+        # Display caption selection
+        selected_key = st.radio(
+            "**Select caption:**",
+            options=list(caption_options.keys()),
+            format_func=lambda x: f"{caption_options[x][0]}: {caption_options[x][1][:80]}..."
+        )
+        
+        selected_caption_text = caption_options[selected_key][1]
+        
+        # Display selected caption in box
+        st.markdown(f"""
+        <div class="info-box">
+            <strong>Selected Caption ({caption_options[selected_key][0]}):</strong><br>
+            <em>"{selected_caption_text}"</em>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # === STEP 2: GENERATE REVIEWS ===
+        st.markdown("---")
+        st.markdown("### Step 2: Generate Customer Reviews")
+        
+        if st.button("🎲 Generate Reviews Based on Selected Caption", type="primary", use_container_width=True):
             with st.spinner("Generating realistic reviews..."):
                 try:
                     data = {
-                        "caption": caption,
+                        "caption": selected_caption_text,
                         "description": st.session_state.description,
                         "price": str(st.session_state.price),
                         "category": st.session_state.category,
@@ -427,13 +554,18 @@ with tab2:
                     resp = requests.post(f"{BACKEND_URL}/reviews", data=data, timeout=30)
                     resp.raise_for_status()
                     st.session_state.reviews = resp.json().get("reviews", [])
+                    st.session_state.selected_caption = selected_caption_text
+                    st.session_state.selected_caption_type = selected_key
                     st.success("✅ Reviews generated!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
         
+        # === STEP 3: DISPLAY REVIEWS ===
         if st.session_state.reviews:
             st.markdown("---")
+            st.markdown("### 📝 Generated Customer Reviews")
+            st.caption(f"Based on: **{caption_options.get(st.session_state.selected_caption_type, ('Selected', ''))[0]}** caption")
             
             for idx, review in enumerate(sorted(st.session_state.reviews, key=lambda r: r.get("rating", 0), reverse=True)):
                 rating = review.get("rating", 0)
@@ -487,6 +619,11 @@ with tab3:
                     st.error(f"Error: {e}")
         
         if st.session_state.report_text:
+            # Show product image at top of report
+            if st.session_state.image_bytes:
+                st.image(st.session_state.image_bytes, caption="Product Image", width=400)
+                st.markdown("---")
+            
             col1, col2 = st.columns([3, 1])
             
             with col1:
@@ -495,7 +632,6 @@ with tab3:
             
             with col2:
                 if st.button("📥 Download PDF", use_container_width=True):
-                    with st.spinner("Creating PDF..."):
                         try:
                             files = {
                                 "file": (
@@ -524,4 +660,4 @@ with tab3:
 
 # Footer
 st.markdown("---")
-st.caption("🤖 Powered by GPT-4 Vision • Smart E-Commerce Assistant v2.0")
+st.caption("🤖 Powered by GPT-4 Vision • Smart E-Commerce Assistant v2.1 • With LangSmith Monitoring")

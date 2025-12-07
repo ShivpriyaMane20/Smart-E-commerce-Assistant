@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime
 from typing import Any, Dict, List, TypedDict
@@ -11,6 +12,26 @@ from typing_extensions import Literal
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from langgraph.graph import StateGraph, END
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ============================================================================
+# LangSmith Configuration
+# ============================================================================
+
+LANGSMITH_TRACING = os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"
+
+if LANGSMITH_TRACING:
+    print("✅ LangSmith tracing enabled for reviews module")
+    os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
+    # Ensure LANGCHAIN_API_KEY and LANGCHAIN_PROJECT are set in .env
+    project_name = os.getenv("LANGCHAIN_PROJECT", "smart-ecommerce-reviews")
+    os.environ["LANGCHAIN_PROJECT"] = project_name
+    print(f"📊 LangSmith Project: {project_name}")
+else:
+    print("⚠️ LangSmith tracing disabled for reviews (set LANGCHAIN_TRACING_V2=true in .env)")
+
 
 # -----------------------------------------
 # SECURITY: Input Sanitization & Validation
@@ -204,13 +225,17 @@ class ReviewState(TypedDict, total=False):
 
 
 # -----------------------------------------
-# 2. LLM + SECURED prompt for review responses
+# 2. LLM + SECURED prompt for review responses (WITH LANGSMITH)
 # -----------------------------------------
 
 review_llm = ChatOpenAI(
     model="gpt-4o-mini",
     temperature=0.7,
     max_tokens=400,
+    metadata={
+        "service": "review_response_generation",
+        "component": "reviews_module"
+    }
 )
 
 def build_review_prompt() -> ChatPromptTemplate:
@@ -299,16 +324,18 @@ review_prompt = build_review_prompt()
 
 
 # -----------------------------------------
-# 3. SECURED LangGraph nodes
+# 3. SECURED LangGraph nodes (WITH LANGSMITH METADATA)
 # -----------------------------------------
 
 class ReviewNodes:
     def generate(self, state: ReviewState) -> ReviewState:
         """
         SECURED: Generate response with input sanitization and output validation.
+        WITH LANGSMITH: Adds run metadata for monitoring
         """
         rating = state["rating"]
         review_text = state["review_text"]
+        product_id = state.get("product_id", "unknown")
         
         # SECURITY: Sanitize inputs before sending to LLM
         try:
@@ -324,9 +351,24 @@ class ReviewNodes:
             new_state["metadata"]["security_blocked"] = True
             return new_state
 
-        # Call LLM with sanitized input
+        # Call LLM with sanitized input and LangSmith metadata
         chain = review_prompt | review_llm
-        raw = chain.invoke({"rating": rating, "review_text": clean_review}).content
+        
+        # Add run metadata for LangSmith
+        config = {
+            "tags": ["review_generation", f"rating_{rating}"],
+            "metadata": {
+                "rating": rating,
+                "product_id": product_id,
+                "review_length": len(clean_review),
+                "operation": "generate_review_response"
+            }
+        }
+        
+        raw = chain.invoke(
+            {"rating": rating, "review_text": clean_review},
+            config=config
+        ).content
 
         if isinstance(raw, list):
             raw_text = "".join(str(x) for x in raw)
@@ -364,6 +406,7 @@ class ReviewNodes:
         
         new_state.setdefault("errors", [])
         new_state.setdefault("metadata", {})
+        new_state["metadata"]["llm_call_count"] = new_state["metadata"].get("llm_call_count", 0) + 1
         
         return new_state
 
@@ -461,6 +504,7 @@ class ReviewNodes:
 
         metadata = dict(new_state.get("metadata") or {})
         metadata["regeneration_count"] = metadata.get("regeneration_count", 0)
+        metadata["validation_errors_count"] = len(errors)
         new_state["metadata"] = metadata
 
         return new_state
@@ -530,7 +574,7 @@ class ReviewNodes:
 
 
 # -----------------------------------------
-# 4. Build secured LangGraph
+# 4. Build secured LangGraph (WITH LANGSMITH TAGS)
 # -----------------------------------------
 
 def build_review_graph() -> Any:
@@ -576,7 +620,7 @@ review_app = build_review_graph()
 
 
 # -----------------------------------------
-# 5. SECURED helper function
+# 5. SECURED helper function (WITH LANGSMITH)
 # -----------------------------------------
 
 def run_review_workflow(
@@ -586,6 +630,7 @@ def run_review_workflow(
 ) -> Dict[str, Any]:
     """
     SECURED: Run workflow with input sanitization.
+    WITH LANGSMITH: Adds trace metadata
     """
     # SECURITY: Sanitize product_id
     clean_product_id = SecurityValidator.sanitize_product_id(product_id)
@@ -599,10 +644,23 @@ def run_review_workflow(
         "themes": [],
         "response": "",
         "errors": [],
-        "metadata": {"regeneration_count": 0},
+        "metadata": {
+            "regeneration_count": 0,
+            "llm_call_count": 0
+        },
     }
 
-    final_state = review_app.invoke(initial_state)
+    # Run workflow with LangSmith config
+    config = {
+        "tags": ["review_workflow", f"product_{clean_product_id}"],
+        "metadata": {
+            "rating": rating,
+            "product_id": clean_product_id,
+            "workflow": "review_response_generation"
+        }
+    }
+    
+    final_state = review_app.invoke(initial_state, config=config)
     
     metadata = final_state.get("metadata", {})
 
@@ -615,19 +673,24 @@ def run_review_workflow(
         "validation_errors": final_state.get("errors", []),
         "quality_score": metadata.get("quality_score", 0),
         "regeneration_count": metadata.get("regeneration_count", 0),
-        "security_blocked": metadata.get("security_blocked", False),  # NEW
+        "llm_call_count": metadata.get("llm_call_count", 0),
+        "security_blocked": metadata.get("security_blocked", False),
         "metadata": metadata,
     }
 
 
 # -----------------------------------------
-# 6. Simulate reviews (unchanged but could add similar security)
+# 6. Simulate reviews (WITH LANGSMITH)
 # -----------------------------------------
 
 simulation_llm = ChatOpenAI(
     model="gpt-4o-mini",
     temperature=0.5,
     max_tokens=450,
+    metadata={
+        "service": "review_simulation",
+        "component": "reviews_module"
+    }
 )
 
 def simulate_reviews_and_responses(
@@ -637,7 +700,7 @@ def simulate_reviews_and_responses(
     category: str,
     missing_features: List[str] | None = None,
 ) -> Dict[str, Any]:
-    """Generate simulated reviews and responses."""
+    """Generate simulated reviews and responses (WITH LANGSMITH)."""
     missing_features = missing_features or []
 
     system = """
@@ -679,7 +742,18 @@ Issues: {", ".join(missing_features[:5]) if missing_features else "None"}
     )
 
     chain = prompt | simulation_llm
-    raw = chain.invoke({"info": human}).content
+    
+    # LangSmith config
+    config = {
+        "tags": ["review_simulation", category],
+        "metadata": {
+            "price": price,
+            "category": category,
+            "operation": "simulate_reviews"
+        }
+    }
+    
+    raw = chain.invoke({"info": human}, config=config).content
     if isinstance(raw, list):
         raw_text = "".join(str(x) for x in raw)
     else:
